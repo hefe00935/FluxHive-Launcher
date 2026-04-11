@@ -1440,7 +1440,7 @@ class WaterLauncher(DraggableWindow):
             self.launch_worker.deleteLater()
         if success:
                 self.home_page.set_launch_status("Game closed.")
-                QApplication.instance().quit()
+                self.show()
                 return
         self.home_page.set_launch_status(f"Launch failed: {message}", is_error=True)
         self.show()
