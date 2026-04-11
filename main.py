@@ -18,7 +18,7 @@ from PyQt6.QtGui import QIcon, QFont
 
 logging.basicConfig(level=logging.INFO, format=" %(message)s")   
 
-APP_VERSION = "1.0"
+APP_VERSION = "1.0.2"
 APP_TAGLINE = "Minecraft launcher that includes a free version of Minecraft with mods."
 APP_SUMMARY = "Reliable modded Minecraft launcher tuned for FluxHive players."
 MAX_OFFLINE_ACCOUNTS = 5
