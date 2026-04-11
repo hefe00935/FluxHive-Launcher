@@ -18,7 +18,7 @@ from PyQt6.QtGui import QIcon, QFont
 
 logging.basicConfig(level=logging.INFO, format=" %(message)s")   
 
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0"
 APP_TAGLINE = "Minecraft launcher that includes a free version of Minecraft with mods."
 APP_SUMMARY = "Reliable modded Minecraft launcher tuned for FluxHive players."
 MAX_OFFLINE_ACCOUNTS = 5
@@ -954,7 +954,11 @@ class ModsPage(QWidget):
         mods_found = False
         if os.path.exists(self.mods_dir):
             for mod_file in os.listdir(self.mods_dir):
-                if mod_file.endswith(('.jar', '.zip')):
+                # Hide Feather Client so it doesn't conflict with Settings
+                if "feather-client" in mod_file.lower():
+                    continue
+                    
+                if mod_file.endswith(('.jar', '.zip', '.disabled')):
                     mod_frame = self.create_mod_item(mod_file)
                     scroll_layout.addWidget(mod_frame)
                     mods_found = True
@@ -998,8 +1002,43 @@ class ModsPage(QWidget):
         frame_layout = QHBoxLayout(frame)
         frame_layout.setContentsMargins(10, 10, 10, 10)
         
-        checkbox = QCheckBox(mod_name)
-        checkbox.setCheckState(Qt.CheckState.Checked)
+        # Clean the display name for the checkbox
+        display_name = mod_name.replace(".disabled", "")
+        checkbox = QCheckBox(display_name)
+        
+        # Set initial state: If it ends in .disabled, it's unchecked
+        is_enabled = not mod_name.endswith(".disabled")
+        checkbox.setChecked(is_enabled)
+        
+        # Store the current filename in a property so the toggle knows what to rename
+        checkbox.setProperty("current_filename", mod_name)
+
+        def toggle_mod(state):
+            current_fn = checkbox.property("current_filename")
+            old_path = os.path.join(self.mods_dir, current_fn)
+            
+            if state == 0:  # Unchecked -> Disable the mod
+                if not current_fn.endswith(".disabled"):
+                    new_fn = current_fn + ".disabled"
+                else:
+                    return
+            else:  # Checked -> Enable the mod
+                new_fn = current_fn.replace(".disabled", "")
+            
+            new_path = os.path.join(self.mods_dir, new_fn)
+            
+            try:
+                if os.path.exists(old_path):
+                    os.rename(old_path, new_path)
+                    checkbox.setProperty("current_filename", new_fn)
+                    # Trigger a refresh of the mod count on the Home Page if possible
+                    if hasattr(self.window(), 'home_page'):
+                        self.window().home_page.update_mod_count()
+            except Exception as exc:
+                print(f"Failed to rename mod: {exc}")
+
+        checkbox.stateChanged.connect(toggle_mod)
+        
         checkbox.setStyleSheet("""
             QCheckBox {
                 color: #5f9dff;
@@ -1027,7 +1066,10 @@ class ModsPage(QWidget):
         return frame
 
     def refresh_mods(self):
-        print(f" Mods refreshed from: {self.mods_dir}")
+        print("Restarting launcher to refresh mods...")
+        QApplication.quit()
+        # This completely restarts the Python script
+        os.execl(sys.executable, sys.executable, *sys.argv)
 
     def open_mods_folder(self):
         try:
@@ -1063,10 +1105,14 @@ class SettingsPage(QWidget):
         self.settings = self.load_settings()
         self.init_ui()
 
+    
+
     def load_settings(self):
         defaults = {
-            "ram_gb": get_auto_ram_allocation()
+            "ram_gb": get_auto_ram_allocation(),
+            "feather_enabled": False # Add this default
         }
+        # rest
         if not os.path.exists(self.settings_path):
             return defaults
         try:
@@ -1090,6 +1136,27 @@ class SettingsPage(QWidget):
         self.ram_settings_label.setText(f"{value}/16 RAM")
         self.settings["ram_gb"] = int(value)
         self.save_settings()
+    
+    def _on_feather_toggled(self, state):
+        is_enabled = bool(state)
+        self.settings["enable_feather"] = is_enabled
+        self.save_settings()
+        self._apply_feather_state(is_enabled)
+
+    def _apply_feather_state(self, is_enabled):
+        mods_dir = os.path.join(self.launcher.custom_game_dir, "mods")
+        enabled_path = os.path.join(mods_dir, "feather-client.jar")
+        disabled_path = os.path.join(mods_dir, "feather-client.jar.disabled")
+
+        try:
+            if is_enabled:
+                if os.path.exists(disabled_path):
+                    os.rename(disabled_path, enabled_path)
+            else:
+                if os.path.exists(enabled_path):
+                    os.rename(enabled_path, disabled_path)
+        except Exception as e:
+            print(f"Failed to toggle Feather Client: {e}")
 
     def init_ui(self):
         root_layout = QVBoxLayout(self)
@@ -1120,8 +1187,9 @@ class SettingsPage(QWidget):
         layout.addWidget(ram_label)
         
         ram_frame = QFrame()
+        ram_frame.setObjectName("RamFrame") # Add this line
         ram_frame.setStyleSheet("""
-            QFrame {
+            #RamFrame {  /* Use the # symbol to target ONLY the frame */
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                             stop:0 rgba(31, 86, 179, 0.15), stop:1 rgba(31, 86, 179, 0.05));
                 border: 3px solid #1f56b3;
@@ -1161,39 +1229,76 @@ class SettingsPage(QWidget):
         
         layout.addWidget(ram_frame)
 
+        layout.addSpacing(20)
+        
+        feather_label = QLabel("CLIENT INTEGRATION")
+        feather_label.setStyleSheet("color: #bcd3ff; font-size: 13px; font-weight: 900; letter-spacing: 1.5px; margin-bottom: 6px;")
+        layout.addWidget(feather_label)
+        
+        feather_frame = QFrame()
+        feather_frame.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                            stop:0 rgba(31, 86, 179, 0.15), stop:1 rgba(31, 86, 179, 0.05));
+                border: 3px solid #1f56b3;
+                border-radius: 15px;
+                padding: 30px;
+            }
+        """)
+        feather_layout = QVBoxLayout(feather_frame)
+        
+        self.feather_checkbox = QCheckBox("Enable Feather Client")
+        self.feather_checkbox.setChecked(self.settings.get("enable_feather", False))
+        self.feather_checkbox.setStyleSheet("""
+            QCheckBox { 
+                color: #c8d6f0; 
+                font-size: 15px; 
+                font-weight: bold; 
+                background-color: transparent; 
+                border: none; 
+            }
+            QCheckBox::indicator { width: 20px; height: 20px; }
+            QCheckBox::indicator:unchecked { background: #2d2d3d; border: 2px solid #1f56b3; border-radius: 4px; }
+            QCheckBox::indicator:checked { background: #2f6fd1; border: 2px solid #1f56b3; border-radius: 4px; }
+        """)
+        self.feather_checkbox.stateChanged.connect(self._on_feather_toggled)
+        feather_layout.addWidget(self.feather_checkbox)
+        
+        layout.addWidget(feather_frame)
+
+        layout.addStretch()
+        
+        # Enforce the current state on startup
+        self._apply_feather_state(self.settings.get("enable_feather", False))
+
         layout.addStretch()
 
     def get_slider_style(self):
         return """
-            QSlider {
-                background: transparent;
-            }
+            QSlider { background: transparent; border: none; }
             QSlider::groove:horizontal {
                 background: rgba(255, 255, 255, 0.08);
                 height: 6px;
                 border-radius: 3px;
+                border: none; /* Explicitly remove inherited borders */
             }
             QSlider::sub-page:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                            stop:0 #1f56b3, stop:1 #2f6fd1);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1f56b3, stop:1 #2f6fd1);
                 height: 6px;
                 border-radius: 3px;
+                border: none;
             }
             QSlider::add-page:horizontal {
                 background: rgba(255, 255, 255, 0.04);
                 border-radius: 3px;
+                border: none;
             }
             QSlider::handle:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                            stop:0 #2b66c8, stop:1 #4a85ff);
-                width: 24px;
-                margin: -10px 0;
-                border-radius: 12px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #2b66c8, stop:1 #4a85ff);
+                width: 20px;
+                margin: -7px 0;
+                border-radius: 10px;
                 border: 2px solid #76b0ff;
-            }
-            QSlider::handle:horizontal:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                            stop:0 #4a85ff, stop:1 #76b0ff);
             }
         """
 
@@ -1438,10 +1543,11 @@ class WaterLauncher(DraggableWindow):
         self._set_launch_controls_enabled(True)
         if self.launch_worker:
             self.launch_worker.deleteLater()
+            self.launch_worker = None  # ADD THIS LINE to fix the crash
         if success:
-                self.home_page.set_launch_status("Game closed.")
-                self.show()
-                return
+            self.home_page.set_launch_status("Game closed.")
+            self.show()  # Brings the launcher back up
+            return
         self.home_page.set_launch_status(f"Launch failed: {message}", is_error=True)
         self.show()
 
